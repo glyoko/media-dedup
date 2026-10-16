@@ -12,6 +12,7 @@ from PIL import Image
 
 from media_dedup import cli
 from media_dedup.report import describe, human_size
+from media_dedup.signature import DHASH_POSSIBLE
 from media_factory import caption, load, write_video
 
 Q = ".media-dedup-removed"
@@ -324,3 +325,29 @@ class TestRestore:
         monkeypatch.chdir(tmp_path)
         code, out, err = run(["-d", "./restore"], capsys)
         assert code == 0 and "Found 0 images" in err
+
+
+@pytest.mark.parametrize("flag", ["--phash", "--dhash"])
+def test_hash_limit_flags_tighten_possible_matches(memes, capsys, flag):
+    _, out, _ = run(["-d", memes], capsys)
+    assert "Would ask about these" in out
+    _, out, _ = run(["-d", flag, "2", memes], capsys)
+    assert "Would ask about these" not in out  # caption edit is ~6 apart in both hashes
+
+
+def test_hash_limit_flags_show_in_debug_header(memes, capsys):
+    _, out, _ = run(["-d", "-D", "--phash", "9", memes], capsys)
+    header = next(line for line in out.splitlines() if "POSSIBLE needs" in line)
+    assert header.startswith(f"[debug] POSSIBLE needs: pHash <= 9, dHash <= {DHASH_POSSIBLE} ")
+    assert header.endswith("[set by --phash]")
+    assert "possible <= 9)" in out
+    _, out, _ = run(["-d", "-D", memes], capsys)
+    assert "set by" not in out
+
+
+@pytest.mark.parametrize("value", ["-1", "65", "ten"])
+def test_bad_hash_limits(value, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--phash", value, "."])
+    assert exc.value.code == 2
+    assert "--phash" in capsys.readouterr().err

@@ -67,9 +67,16 @@ those, `a` to keep all of them, `v` to open them in your viewer, or `q` to stop 
 | `-n`, `--non-interactive` | Never ask; leave uncertain groups alone. Automatic when stdin isn't a terminal. |
 | `--no-recursive` | Only scan the top level of each folder (subfolders are scanned by default). |
 | `-q DIR`, `--quarantine-dir DIR` | Where removed files go. Default: `PATH/.media-dedup-removed`. |
+| `--phash N` | Max pHash distance (0–64) for two files to be shown as possible duplicates. Default: 12. Lower it if unrelated pictures get grouped; raise it to catch heavier edits. |
+| `--dhash N` | Max dHash distance (0–64) for possible duplicates. Default: 26. Both hashes have to be within their limits. |
 | `-j N`, `--jobs N` | Number of parallel decoders. Default: CPU count. |
 | `-v`, `--verbose` | List files that couldn't be read. |
 | `-D`, `--debug` | After each group, show both hashes of every file and each check against the keeper (distances, local and colour diff, aspect, flat/low-contrast flags), with the rule that decided it. |
+
+`--phash` and `--dhash` only change which files are *shown to you*. What's removed
+automatically still needs every strict check to pass (and, since a file has to be a possible
+match first, lowering a limit below 6 or 10 also stops some automatic removals). `-D` prints
+both distances for every pair, which helps pick values.
 
 Images: JPEG, PNG, GIF (first frame), WebP, BMP, TIFF (+ HEIC/HEIF/AVIF with the `heic` extra).
 Videos: MP4, M4V, MOV, MKV, WebM, AVI, WMV, FLV, MPEG, 3GP.

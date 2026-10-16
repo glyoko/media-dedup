@@ -17,6 +17,7 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageOps
 
 from media_dedup.signature import (
     DHASH_POSSIBLE,
+    Limits,
     PHASH_POSSIBLE,
     Match,
     MatchLevel,
@@ -261,3 +262,13 @@ def test_helpers():
     assert aspects_match(4 / 3, 640 / 481)
     assert not aspects_match(4 / 3, 16 / 9)
     assert Match(MatchLevel.NONE).similarity == 0.0
+
+
+def test_limits_override_the_possible_thresholds(originals):
+    img, sig = originals[0]
+    edited = signature_from_image(caption(img))
+    pd, dd = hamming(sig.phash, edited.phash), hamming(sig.dhash, edited.dhash)
+    assert compare(sig, edited).level is MatchLevel.POSSIBLE
+    assert compare(sig, edited, limits=Limits(phash=pd - 1)).level is MatchLevel.NONE
+    assert compare(sig, edited, limits=Limits(dhash=dd - 1)).level is MatchLevel.NONE
+    assert compare(sig, edited, limits=Limits(phash=pd, dhash=dd)).level is MatchLevel.POSSIBLE

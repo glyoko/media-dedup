@@ -18,6 +18,7 @@ from .media import MediaFile, scan
 from .prompt import QuitRequested, ask
 from .quarantine import DEFAULT_DIRNAME, Quarantine, default_directory, find_manifest, restore
 from .report import debug_header, display_path, format_group, human_size
+from .signature import DHASH_POSSIBLE, HASH_BITS, PHASH_POSSIBLE, Limits
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,6 +64,22 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="DIR",
         help="where removed files go (default: PATH/.media-dedup-removed, for the first PATH)",
     )
+    parser.add_argument(
+        "--phash",
+        type=_hash_distance,
+        default=PHASH_POSSIBLE,
+        metavar="N",
+        help=f"max pHash distance (0-{HASH_BITS}) for files to be shown as possible duplicates "
+        f"(default: {PHASH_POSSIBLE}; lower = fewer false matches)",
+    )
+    parser.add_argument(
+        "--dhash",
+        type=_hash_distance,
+        default=DHASH_POSSIBLE,
+        metavar="N",
+        help=f"max dHash distance (0-{HASH_BITS}) for files to be shown as possible duplicates "
+        f"(default: {DHASH_POSSIBLE})",
+    )
     parser.add_argument("-j", "--jobs", type=int, metavar="N", help="parallel decoders (default: CPU count)")
     parser.add_argument("-v", "--verbose", action="store_true", help="explain skipped files")
     parser.add_argument(
@@ -102,6 +119,16 @@ def build_restore_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("-d", "--dry-run", action="store_true", help="show what would be restored, change nothing")
     return parser
+
+
+def _hash_distance(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a whole number: {text!r}") from None
+    if not 0 <= value <= HASH_BITS:
+        raise argparse.ArgumentTypeError(f"must be between 0 and {HASH_BITS}")
+    return value
 
 
 def _stdin_is_interactive() -> bool:
@@ -157,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.debug:
-        print(debug_header() + "\n")
+        print(debug_header(Limits(args.phash, args.dhash)) + "\n")
     if args.dry_run:
         return _dry_run(automatic, uncertain, args.debug)
     return _apply(automatic, uncertain, Quarantine(qdir, args.paths), interactive, args.debug)
@@ -183,7 +210,7 @@ def _find_visual(
         for other in group.others:
             other.width, other.height = group.keeper.width, group.keeper.height
             other.format, other.duration = group.keeper.format, group.keeper.duration
-    return find_similar(fingerprinted)
+    return find_similar(fingerprinted, Limits(args.phash, args.dhash))
 
 
 def restore_main(argv: list[str]) -> int:

@@ -19,7 +19,7 @@ from .matching import (
     _durations_match,
 )
 from .media import MediaFile
-from .signature import MatchLevel, Signature
+from .signature import DEFAULT_LIMITS, Limits, MatchLevel, Signature
 
 
 def human_size(n: float) -> str:
@@ -92,16 +92,22 @@ def format_group(
 _IMAGE_BLUR = 0.8
 
 
-def debug_header() -> str:
+def debug_header(limits: Limits = DEFAULT_LIMITS) -> str:
     """Where the running code lives and the thresholds in force."""
     S = sig_mod
+    overridden = [
+        flag for flag, value, default in (
+            ("--phash", limits.phash, S.PHASH_POSSIBLE), ("--dhash", limits.dhash, S.DHASH_POSSIBLE)
+        ) if value != default
+    ]
     return "\n".join([
         f"[debug] media-dedup {__version__} from {Path(__file__).parent}",
         f"[debug] CERTAIN needs:  pHash <= {S.PHASH_CERTAIN}, dHash <= {S.DHASH_CERTAIN}, "
         f"local diff <= {S.LOCAL_DIFF_CERTAIN:g}, colour diff <= {S.COLOR_DIFF_CERTAIN:g}, "
         f"aspect within x{S.ASPECT_TOLERANCE:g}, neither flat nor low contrast",
-        f"[debug] POSSIBLE needs: pHash <= {S.PHASH_POSSIBLE}, dHash <= {S.DHASH_POSSIBLE} "
-        f"(two flat images: colour diff <= {S.FLAT_COLOR_DIFF:g}, hashes ignored)",
+        f"[debug] POSSIBLE needs: pHash <= {limits.phash}, dHash <= {limits.dhash} "
+        f"(two flat images: colour diff <= {S.FLAT_COLOR_DIFF:g}, hashes ignored)"
+        + (f"  [set by {' and '.join(overridden)}]" if overridden else ""),
         f"[debug] flat: 128px std < {S.FLAT_STDDEV:g}; low contrast: 32px std < {S.LOW_CONTRAST_STDDEV:g}; "
         f"videos: durations within {DURATION_TOLERANCE_S:g} s or {DURATION_TOLERANCE_FRAC:.0%}, "
         f"frame blur >= {VIDEO_MIN_BLUR:g}",
@@ -119,18 +125,20 @@ def _signature_lines(sig: Signature) -> list[str]:
     ]
 
 
-def _explain(a: Signature, b: Signature, min_blur: float) -> tuple[list[str], str]:
+def _explain(
+    a: Signature, b: Signature, min_blur: float, limits: Limits = DEFAULT_LIMITS
+) -> tuple[list[str], str]:
     """Each measurement behind compare(a, b) against its threshold, and why it
     came out at the level it did. Distances are the real ones, even for flat
     pairs (whose Match reports 0)."""
     S = sig_mod
-    level = S.compare(a, b, min_blur).level
+    level = S.compare(a, b, min_blur, limits).level
     pd, dd = S.hamming(a.phash, b.phash), S.hamming(a.dhash, b.dhash)
     local, color = S.local_diff(a, b, min_blur), S.color_diff(a, b)
     checks = [
-        (f"pHash distance {pd} (certain <= {S.PHASH_CERTAIN}, possible <= {S.PHASH_POSSIBLE})",
+        (f"pHash distance {pd} (certain <= {S.PHASH_CERTAIN}, possible <= {limits.phash})",
          pd <= S.PHASH_CERTAIN),
-        (f"dHash distance {dd} (certain <= {S.DHASH_CERTAIN}, possible <= {S.DHASH_POSSIBLE})",
+        (f"dHash distance {dd} (certain <= {S.DHASH_CERTAIN}, possible <= {limits.dhash})",
          dd <= S.DHASH_CERTAIN),
         (f"local diff {local:.1f} (certain <= {S.LOCAL_DIFF_CERTAIN:g})", local <= S.LOCAL_DIFF_CERTAIN),
         (f"colour diff {color:.1f} (certain <= {S.COLOR_DIFF_CERTAIN:g})", color <= S.COLOR_DIFF_CERTAIN),
@@ -142,10 +150,10 @@ def _explain(a: Signature, b: Signature, min_blur: float) -> tuple[list[str], st
         why = f"both flat, so hashes are ignored; matched on colour only (possible <= {S.FLAT_COLOR_DIFF:g})"
     elif a.flat or b.flat:
         why = "only one of them is flat"
-    elif pd > S.PHASH_POSSIBLE:
-        why = f"pHash distance {pd} > {S.PHASH_POSSIBLE}"
-    elif dd > S.DHASH_POSSIBLE:
-        why = f"dHash distance {dd} > {S.DHASH_POSSIBLE}"
+    elif pd > limits.phash:
+        why = f"pHash distance {pd} > {limits.phash}"
+    elif dd > limits.dhash:
+        why = f"dHash distance {dd} > {limits.dhash}"
     elif level is MatchLevel.CERTAIN:
         why = "every check passed"
     else:
@@ -156,7 +164,7 @@ def _explain(a: Signature, b: Signature, min_blur: float) -> tuple[list[str], st
     return lines, f"{level.name}: {why}"
 
 
-def _video_lines(keeper: MediaFile, other: MediaFile) -> list[str]:
+def _video_lines(keeper: MediaFile, other: MediaFile, limits: Limits = DEFAULT_LIMITS) -> list[str]:
     lines = [
         f"duration {keeper.duration:.2f} s vs {other.duration:.2f} s"
         + ("" if _durations_match(keeper, other) else "  (too different: never compared)")
@@ -165,7 +173,7 @@ def _video_lines(keeper: MediaFile, other: MediaFile) -> list[str]:
         if a is None or b is None:
             lines.append(f"frame {i}: not decoded in {'the keeper' if a is None else 'this file'}")
             continue
-        _, verdict = _explain(a, b, VIDEO_MIN_BLUR)
+        _, verdict = _explain(a, b, VIDEO_MIN_BLUR, limits)
         lines.append(
             f"frame {i}: pHash {sig_mod.hamming(a.phash, b.phash):2}  dHash {sig_mod.hamming(a.dhash, b.dhash):2}  "
             f"local {sig_mod.local_diff(a, b, VIDEO_MIN_BLUR):5.1f}  colour {sig_mod.color_diff(a, b):5.1f}  {verdict}"
@@ -199,11 +207,11 @@ def format_debug(group: DuplicateGroup) -> str:
             )
         if mf is not keeper and mf.signatures and keeper.signatures:
             if mf.kind == "image":
-                lines, verdict = _explain(keeper.signatures[0], mf.signatures[0], _IMAGE_BLUR)
+                lines, verdict = _explain(keeper.signatures[0], mf.signatures[0], _IMAGE_BLUR, group.limits)
                 body += ["vs keeper:"] + [f"  {line}" for line in lines] + [f"  => {verdict}"]
             else:
                 overall = group.matches[mf].level.name if mf in group.matches else "?"
-                body += ["vs keeper:"] + [f"  {line}" for line in _video_lines(keeper, mf)]
+                body += ["vs keeper:"] + [f"  {line}" for line in _video_lines(keeper, mf, group.limits)]
                 body.append(f"  => {overall} overall (certain: every non-blank frame certain; "
                             "possible: at least half of them possible)")
         out += [f"       {line}" for line in body]

@@ -24,7 +24,7 @@ import numpy as np
 from . import fingerprint
 from .media import MediaFile
 from .quality import rank
-from .signature import PHASH_POSSIBLE, Match, MatchLevel, compare
+from .signature import DEFAULT_LIMITS, Limits, Match, MatchLevel, compare
 
 GroupKind = Literal["exact", "similar", "uncertain"]
 
@@ -44,6 +44,8 @@ class DuplicateGroup:
     files: list[MediaFile]  # best-first; files[0] is the suggested keeper
     # How each non-keeper compares to the keeper (absent for exact groups).
     matches: dict[MediaFile, Match] = field(default_factory=dict)
+    # The hash limits the group was found with (for --debug).
+    limits: Limits = DEFAULT_LIMITS
 
     @property
     def keeper(self) -> MediaFile:
@@ -102,13 +104,13 @@ def find_exact(files: Iterable[MediaFile]) -> list[DuplicateGroup]:
 # --- Visual similarity -------------------------------------------------------
 
 
-def compare_files(a: MediaFile, b: MediaFile) -> Match:
+def compare_files(a: MediaFile, b: MediaFile, limits: Limits = DEFAULT_LIMITS) -> Match:
     """Compare two fingerprinted files of the same kind."""
     if a.kind != b.kind:
         return Match(MatchLevel.NONE)
     if a.kind == "image":
-        return compare(a.signatures[0], b.signatures[0])
-    return _compare_videos(a, b)
+        return compare(a.signatures[0], b.signatures[0], limits=limits)
+    return _compare_videos(a, b, limits)
 
 
 def _durations_match(a: MediaFile, b: MediaFile) -> bool:
@@ -118,14 +120,14 @@ def _durations_match(a: MediaFile, b: MediaFile) -> bool:
     return diff <= DURATION_TOLERANCE_S or diff <= DURATION_TOLERANCE_FRAC * max(a.duration, b.duration)
 
 
-def _compare_videos(a: MediaFile, b: MediaFile) -> Match:
+def _compare_videos(a: MediaFile, b: MediaFile, limits: Limits = DEFAULT_LIMITS) -> Match:
     """Compare videos frame-by-frame at the same relative sample positions."""
     if not _durations_match(a, b):
         return Match(MatchLevel.NONE)
     pairs = [(sa, sb) for sa, sb in zip(a.signatures, b.signatures) if sa is not None and sb is not None]
     if not pairs:
         return Match(MatchLevel.NONE)
-    results = [compare(sa, sb, VIDEO_MIN_BLUR) for sa, sb in pairs]
+    results = [compare(sa, sb, VIDEO_MIN_BLUR, limits) for sa, sb in pairs]
     # Frames that are blank in both videos (fades, black frames) carry no
     # information about whether the videos are the same.
     informative = [m for m, (sa, sb) in zip(results, pairs) if not (sa.flat and sb.flat)]
@@ -153,7 +155,7 @@ def _compare_videos(a: MediaFile, b: MediaFile) -> Match:
     )
 
 
-def _image_candidates(images: list[MediaFile]) -> Iterable[tuple[MediaFile, MediaFile]]:
+def _image_candidates(images: list[MediaFile], max_phash: int) -> Iterable[tuple[MediaFile, MediaFile]]:
     """Pairs of images whose phashes are close enough to be worth comparing."""
     informative = [mf for mf in images if not mf.signatures[0].flat]
     flat = [mf for mf in images if mf.signatures[0].flat]
@@ -161,7 +163,7 @@ def _image_candidates(images: list[MediaFile]) -> Iterable[tuple[MediaFile, Medi
         hashes = np.array([mf.signatures[0].phash for mf in informative], dtype=np.uint64)
         for i in range(len(informative) - 1):
             distances = np.bitwise_count(hashes[i + 1 :] ^ hashes[i])
-            for j in np.nonzero(distances <= PHASH_POSSIBLE)[0]:
+            for j in np.nonzero(distances <= max_phash)[0]:
                 yield informative[i], informative[i + 1 + int(j)]
     for i, a in enumerate(flat):
         for b in flat[i + 1 :]:
@@ -182,19 +184,19 @@ def _video_candidates(videos: list[MediaFile]) -> Iterable[tuple[MediaFile, Medi
             yield a, b
 
 
-def find_similar(files: Iterable[MediaFile]) -> list[DuplicateGroup]:
+def find_similar(files: Iterable[MediaFile], limits: Limits = DEFAULT_LIMITS) -> list[DuplicateGroup]:
     """Group visually similar fingerprinted files into similar/uncertain groups."""
     files = [mf for mf in files if mf.signatures]
     edges: dict[tuple[MediaFile, MediaFile], Match] = {}
-    pairs = list(_image_candidates([f for f in files if f.kind == "image"]))
+    pairs = list(_image_candidates([f for f in files if f.kind == "image"], limits.phash))
     pairs += _video_candidates([f for f in files if f.kind == "video"])
     for a, b in pairs:
-        m = compare_files(a, b)
+        m = compare_files(a, b, limits)
         if m.level > MatchLevel.NONE:
             edges[(a, b)] = m
 
     def match_between(a: MediaFile, b: MediaFile) -> Match:
-        return edges.get((a, b)) or edges.get((b, a)) or compare_files(a, b)
+        return edges.get((a, b)) or edges.get((b, a)) or compare_files(a, b, limits)
 
     # 1. Clusters linked by CERTAIN matches. To guard against chains (A~B~C
     #    where A and C differ), only members that are a CERTAIN match for the
@@ -213,7 +215,7 @@ def find_similar(files: Iterable[MediaFile]) -> list[DuplicateGroup]:
         members = [keeper] + [o for o in ranked[1:] if matches[o].level is MatchLevel.CERTAIN]
         if len(members) > 1:
             groups.append(
-                DuplicateGroup("similar", members, {o: matches[o] for o in members[1:]})
+                DuplicateGroup("similar", members, {o: matches[o] for o in members[1:]}, limits)
             )
             for o in members[1:]:
                 representative[o] = keeper
@@ -247,6 +249,6 @@ def find_similar(files: Iterable[MediaFile]) -> list[DuplicateGroup]:
             }
             if matches:
                 members = [keeper] + list(matches)
-                groups.append(DuplicateGroup("uncertain", members, matches))
+                groups.append(DuplicateGroup("uncertain", members, matches, limits))
                 remaining = [o for o in remaining if o not in matches]
     return groups

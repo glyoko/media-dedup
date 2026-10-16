@@ -70,7 +70,10 @@ Notes on the data model:
   auto-removed. Don't weaken it.** Hash distance alone puts them in the same range as a
   resized copy.
 - **POSSIBLE needs both hashes close** (`PHASH_POSSIBLE` and `DHASH_POSSIBLE`). pHash
-  alone collides for unrelated photos with a similar layout.
+  alone collides for unrelated photos with a similar layout. Users can override both with
+  `--phash`/`--dhash`, carried as `signature.Limits` through `find_similar` →
+  `compare_files` → `compare` (and on `DuplicateGroup.limits` for `--debug`). The CERTAIN
+  limits are deliberately not overridable.
 - **Solid-colour ("flat") images and frames are never CERTAIN.** Nor are low-contrast
   ones (`LOW_CONTRAST_STDDEV`, e.g. very dark photos): the absolute local-diff limit can't
   see a caption that was darkened along with them.

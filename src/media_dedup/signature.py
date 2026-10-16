@@ -68,6 +68,21 @@ LOW_CONTRAST_STDDEV = 4.0
 FLAT_COLOR_DIFF = 6.0
 
 
+@dataclass(frozen=True)
+class Limits:
+    """Hash limits for a POSSIBLE match, overridable with ``--phash``/``--dhash``.
+
+    The CERTAIN limits are deliberately not overridable: they decide what gets
+    removed without asking.
+    """
+
+    phash: int = PHASH_POSSIBLE
+    dhash: int = DHASH_POSSIBLE
+
+
+DEFAULT_LIMITS = Limits()
+
+
 class MatchLevel(enum.IntEnum):
     NONE = 0
     POSSIBLE = 1
@@ -206,12 +221,13 @@ def aspects_match(a: float, b: float) -> bool:
     return max(a, b) / min(a, b) <= ASPECT_TOLERANCE
 
 
-def compare(a: Signature, b: Signature, min_blur: float = 0.8) -> Match:
+def compare(a: Signature, b: Signature, min_blur: float = 0.8, limits: Limits = DEFAULT_LIMITS) -> Match:
     """Classify how likely it is that two signatures show the same picture.
 
     ``min_blur`` is the minimum Gaussian sigma (in thumbnail pixels) applied
     before looking for local differences; video frames use a larger value
     because frames sampled from two encodes are never perfectly aligned in time.
+    ``limits`` sets how close both hashes must be for a POSSIBLE match.
     """
     if a.flat or b.flat:
         # Solid-colour images all hash alike; only the colour is informative,
@@ -223,10 +239,10 @@ def compare(a: Signature, b: Signature, min_blur: float = 0.8) -> Match:
         return Match(level, 0, 0, 0.0, color)
 
     pd = hamming(a.phash, b.phash)
-    if pd > PHASH_POSSIBLE:
+    if pd > limits.phash:
         return Match(MatchLevel.NONE, pd)
     dd = hamming(a.dhash, b.dhash)
-    if dd > DHASH_POSSIBLE:
+    if dd > limits.dhash:
         return Match(MatchLevel.NONE, pd, dd)
     local, color = local_diff(a, b, min_blur), color_diff(a, b)
     certain = (

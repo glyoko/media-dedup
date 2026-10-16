@@ -9,7 +9,7 @@ from PIL import Image, ImageEnhance
 from media_dedup import matching
 from media_dedup.matching import compare_files, find_exact, find_similar
 from media_dedup.media import MediaFile
-from media_dedup.signature import Match, MatchLevel, signature_from_array
+from media_dedup.signature import Limits, Match, MatchLevel, signature_from_array
 from media_factory import caption, load, recompress, watermark, write_video
 
 
@@ -98,7 +98,7 @@ class TestFindSimilar:
             frozenset({a, c}): MatchLevel.POSSIBLE,
         }
         monkeypatch.setattr(
-            matching, "compare_files", lambda x, y: Match(levels[frozenset({x, y})], 3, 3, 1.0, 1.0)
+            matching, "compare_files", lambda x, y, *_: Match(levels[frozenset({x, y})], 3, 3, 1.0, 1.0)
         )
         groups = {g.kind: g for g in find_similar(files)}
         assert by_name(groups["similar"]) == ["a", "b"]
@@ -112,7 +112,7 @@ class TestFindSimilar:
         monkeypatch.setattr(
             matching,
             "compare_files",
-            lambda x, y: Match(MatchLevel.POSSIBLE if frozenset({x, y}) in linked else MatchLevel.NONE, 10),
+            lambda x, y, *_: Match(MatchLevel.POSSIBLE if frozenset({x, y}) in linked else MatchLevel.NONE, 10),
         )
         groups = find_similar(files)
         assert all(g.kind == "uncertain" for g in groups)
@@ -188,3 +188,11 @@ class TestVideos:
         a.duration = b.duration = 0.0
         (group,) = find_similar([a, b, c])
         assert sorted(by_name(group)) == ["a.mp4", "b.mp4"]
+
+
+def test_find_similar_uses_the_given_limits(save, make_media):
+    img = load(2)
+    files = [make_media(save(img, "plain.jpg")), make_media(save(caption(img), "meme.jpg"))]
+    (group,) = find_similar(files, Limits(phash=20, dhash=30))
+    assert group.limits == Limits(20, 30)
+    assert find_similar(files, Limits(phash=1)) == []
