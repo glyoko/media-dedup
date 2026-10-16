@@ -24,7 +24,7 @@ def test_cli_debug_explains_every_kind_of_group(tmp_path, capsys):
 
     assert cli.main(["--dry-run", "--debug", str(tmp_path)]) == 0
     out = capsys.readouterr().out
-    assert "[debug] media-dedup" in out and "POSSIBLE needs: pHash <= 14" in out
+    assert "[debug] media-dedup" in out and f"POSSIBLE needs: pHash <= {PHASH_POSSIBLE}" in out
     assert "byte-identical" in out and "SHA-256" in out
     assert "mode RGB" in out and "pHash " in out and "dHash " in out
     assert "=> CERTAIN: every check passed" in out

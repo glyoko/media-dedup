@@ -39,7 +39,7 @@ PHASH_CERTAIN = 6
 #: Max dhash Hamming distance (out of 64) for a CERTAIN match.
 DHASH_CERTAIN = 10
 #: Max phash Hamming distance for a POSSIBLE match (user gets asked).
-PHASH_POSSIBLE = 14
+PHASH_POSSIBLE = 12
 #: Max dhash Hamming distance for a POSSIBLE match. pHash alone only sees the
 #: coarse layout, so unrelated photos with a similar composition can land
 #: within PHASH_POSSIBLE; their dhash distance stays near random (~32).
