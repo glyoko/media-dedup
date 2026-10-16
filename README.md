@@ -55,6 +55,7 @@ those, `a` to keep all of them, `v` to open them in your viewer, or `q` to stop 
 | `-q DIR`, `--quarantine-dir DIR` | Where removed files go. Default: `PATH/.media-dedup-removed`. |
 | `-j N`, `--jobs N` | Number of parallel decoders. Default: CPU count. |
 | `-v`, `--verbose` | List files that couldn't be read. |
+| `-D`, `--debug` | After each group, show both hashes of every file and each check against the keeper (distances, local and colour diff, aspect, flat/low-contrast flags), with the rule that decided it. |
 
 Images: JPEG, PNG, GIF (first frame), WebP, BMP, TIFF (+ HEIC/HEIF/AVIF with the `heic` extra).
 Videos: MP4, M4V, MOV, MKV, WebM, AVI, WMV, FLV, MPEG, 3GP.

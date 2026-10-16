@@ -54,6 +54,7 @@ def ask(
     input_fn: Callable[[str], str] | None = None,
     output: Callable[[str], None] = print,
     opener: Callable[[Iterable[MediaFile]], None] | None = None,
+    debug: bool = False,
 ) -> list[MediaFile]:
     """Return the files to keep (all of them means "not duplicates").
 
@@ -61,7 +62,7 @@ def ask(
     """
     input_fn = input_fn or input
     opener = opener or open_files
-    output(format_group(group, numbered=True))
+    output(format_group(group, numbered=True, debug=debug))
     while True:
         try:
             answer = input_fn("Keep which? [Enter=1, numbers, a=all, v=view, q=quit, ?=help] ").strip().lower()

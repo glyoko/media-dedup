@@ -40,6 +40,7 @@ def fingerprint_image(mf: MediaFile) -> None:
         if img.getexif().get(0x0112, 1) in (5, 6, 7, 8):
             width, height = height, width
         mf.format = img.format or mf.path.suffix.lstrip(".").upper()
+        mf.mode = img.mode
         img.draft("RGB", DECODE_SIZE)
         sig = signature_from_image(img, size=(width, height))
     mf.width, mf.height = width, height

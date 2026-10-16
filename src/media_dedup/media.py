@@ -48,6 +48,7 @@ class MediaFile:
     width: int = 0
     height: int = 0
     format: str = ""
+    mode: str = ""  # PIL mode as stored in the file; images only
     duration: float = 0.0  # seconds; videos only
     # One per image; one per sample position for videos (None = undecodable frame).
     signatures: list[Signature | None] = field(default_factory=list)

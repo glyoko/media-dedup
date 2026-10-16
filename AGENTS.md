@@ -11,6 +11,7 @@ uv sync                                # install deps + dev group (pytest, pytes
 uv run pytest                          # all tests + coverage report (~8 s)
 uv run pytest --no-cov -q tests/test_signature.py   # fast iteration
 uv run media-dedup --dry-run PATH      # run the tool
+uv run media-dedup -d -D PATH          # dry run + why each group formed
 ```
 
 - The venv is pinned to **Python 3.13** (`.python-version`). The package supports 3.10+.

@@ -12,7 +12,7 @@ from .matching import DuplicateGroup, find_exact, find_similar
 from .media import MediaFile, scan
 from .prompt import QuitRequested, ask
 from .quarantine import Quarantine, default_directory
-from .report import display_path, format_group, human_size
+from .report import debug_header, display_path, format_group, human_size
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -59,6 +59,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("-j", "--jobs", type=int, metavar="N", help="parallel decoders (default: CPU count)")
     parser.add_argument("-v", "--verbose", action="store_true", help="explain skipped files")
+    parser.add_argument(
+        "-D",
+        "--debug",
+        action="store_true",
+        help="show each group's hashes and every comparison check, to see why files were grouped",
+    )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser
 
@@ -112,9 +118,11 @@ def main(argv: list[str] | None = None) -> int:
         print("No duplicates found.")
         return 0
 
+    if args.debug:
+        print(debug_header() + "\n")
     if args.dry_run:
-        return _dry_run(automatic, uncertain)
-    return _apply(automatic, uncertain, Quarantine(qdir, args.paths), interactive)
+        return _dry_run(automatic, uncertain, args.debug)
+    return _apply(automatic, uncertain, Quarantine(qdir, args.paths), interactive, args.debug)
 
 
 def _find_visual(
@@ -140,12 +148,12 @@ def _find_visual(
     return find_similar(fingerprinted)
 
 
-def _dry_run(automatic: list[DuplicateGroup], uncertain: list[DuplicateGroup]) -> int:
+def _dry_run(automatic: list[DuplicateGroup], uncertain: list[DuplicateGroup], debug: bool = False) -> int:
     for group in automatic:
-        print(format_group(group) + "\n")
+        print(format_group(group, debug=debug) + "\n")
     for group in uncertain:
         print("Would ask about these:")
-        print(format_group(group, numbered=True) + "\n")
+        print(format_group(group, numbered=True, debug=debug) + "\n")
     removable = [mf for g in automatic for mf in g.others]
     print(
         f"Dry run: would remove {_plural(len(removable), 'file')} "
@@ -168,9 +176,10 @@ def _apply(
     uncertain: list[DuplicateGroup],
     quarantine: Quarantine,
     interactive: bool,
+    debug: bool = False,
 ) -> int:
     for group in automatic:
-        print(format_group(group) + "\n")
+        print(format_group(group, debug=debug) + "\n")
         _move_all(quarantine, group.others, group.keeper, group.kind)
 
     undecided = list(uncertain)
@@ -178,7 +187,7 @@ def _apply(
         while undecided:
             group = undecided[0]
             try:
-                keep = ask(group)
+                keep = ask(group, debug=debug)
             except QuitRequested:
                 print("Leaving the remaining possible duplicates alone.")
                 break
@@ -188,7 +197,7 @@ def _apply(
     elif undecided:
         for group in undecided:
             print("Not sure about these; leaving them alone:")
-            print(format_group(group, numbered=True) + "\n")
+            print(format_group(group, numbered=True, debug=debug) + "\n")
 
     if quarantine.moved:
         print(
