@@ -66,3 +66,7 @@ Hidden files/folders and symlinks are skipped.
 uv sync
 uv run pytest   # runs the tests with a coverage report
 ```
+
+## License
+
+MIT. See [LICENSE](LICENSE). The test images in `tests/data/images` are Unsplash photos under the [Unsplash License](https://unsplash.com/license); see `tests/data/images/SOURCES.md`.
