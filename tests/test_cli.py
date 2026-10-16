@@ -235,3 +235,92 @@ def test_report_helpers(make_media, save):
     assert human_size(5 * 1024**4) == "5120.0 GB"
     img = make_media(save(Image.new("RGB", (4, 3)), "x.png"))
     assert describe(img) == f"4x3, PNG, {human_size(img.size)}"
+
+
+class TestRestore:
+    def test_restores_everything_including_identical_copies(self, memes, capsys):
+        run(["-n", memes], capsys)
+        code, out, _ = run(["restore", memes], capsys)
+        assert code == 0
+        assert files_in(memes) == ORIGINAL
+        assert "from discord/doge (1).jpg" in out  # the byte-identical copy
+        assert "Restored 4 files." in out
+        assert not (memes / Q).exists()  # emptied quarantine is cleaned up
+
+    def test_undo_hint_after_moving(self, memes, capsys):
+        _, out, _ = run(["-n", memes], capsys)
+        assert "To undo: media-dedup restore" in out
+
+    def test_dry_run_changes_nothing(self, memes, capsys):
+        run(["-n", memes], capsys)
+        manifest = (memes / Q / "manifest.jsonl").read_text()
+        code, out, _ = run(["restore", "--dry-run", memes / Q], capsys)
+        assert code == 0
+        assert out.count("Would restore") == 4
+        assert "Dry run: would restore 4 files." in out
+        assert set(files_in(memes)) == set(ORIGINAL) - AUTO_REMOVED
+        assert (memes / Q / "manifest.jsonl").read_text() == manifest
+
+    def test_only_restores_matching_files_and_keeps_the_rest_listed(self, memes, capsys):
+        run(["-n", memes], capsys)
+        code, out, _ = run(["restore", "--only", "cat*", "-o", "from discord/doge_small.jpg", memes], capsys)
+        assert code == 0
+        assert "Restored 2 files." in out
+        assert set(files_in(memes)) == set(ORIGINAL) - {"clip_sd.mp4", "from discord/doge (1).jpg"}
+        records = [json.loads(line) for line in (memes / Q / "manifest.jsonl").read_text().splitlines()]
+        assert sorted(r["original"].split("/memes/")[1] for r in records) == [
+            "clip_sd.mp4", "from discord/doge (1).jpg",
+        ]
+
+    def test_no_match(self, memes, capsys):
+        run(["-n", memes], capsys)
+        code, out, _ = run(["restore", "-o", "nope*", memes], capsys)
+        assert code == 1
+        assert "Nothing in the quarantine matches." in out
+
+    def test_never_overwrites_and_reports_missing_files(self, memes, capsys):
+        run(["-n", memes], capsys)
+        (memes / "cat_thumb.jpg").write_bytes(b"new file at the old path")
+        (memes / Q / "clip_sd.mp4").unlink()
+        (memes / Q / "manifest.jsonl").open("a").write("not json\n")
+        code, out, err = run(["restore", memes / Q / "manifest.jsonl"], capsys)
+        assert code == 1
+        assert (memes / "cat_thumb.jpg").read_bytes() == b"new file at the old path"
+        assert "something is already at" in err and "cat_thumb.jpg" in err
+        assert "Missing from the quarantine" in err and "clip_sd.mp4" in err
+        assert "Ignored 1 unreadable manifest line." in err
+        assert "Restored 2 files; 2 couldn't be (see above)." in out
+        # Whatever wasn't restored stays listed, so nothing is forgotten.
+        assert len((memes / Q / "manifest.jsonl").read_text().splitlines()) == 3
+        assert (memes / Q / "cat_thumb.jpg").exists()
+
+    def test_move_failures_are_reported(self, memes, capsys, monkeypatch):
+        run(["-n", memes], capsys)
+
+        def fail(*_args):
+            raise PermissionError("read-only")
+
+        monkeypatch.setattr("media_dedup.quarantine.shutil.move", fail)
+        code, out, err = run(["restore", memes], capsys)
+        assert code == 1
+        assert err.count("read-only") == 4
+        assert "Restored 0 files" in out
+        assert len((memes / Q / "manifest.jsonl").read_text().splitlines()) == 4
+
+    def test_empty_manifest(self, tmp_path, capsys):
+        (tmp_path / "manifest.jsonl").write_text("\n")
+        code, out, _ = run(["restore", tmp_path], capsys)
+        assert code == 0
+        assert "The quarantine manifest is empty." in out
+
+    def test_no_manifest_is_an_error(self, tmp_path, capsys):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["restore", str(tmp_path)])
+        assert exc.value.code == 2
+        assert "no quarantine manifest" in capsys.readouterr().err
+
+    def test_folder_named_restore_can_still_be_scanned(self, tmp_path, capsys, monkeypatch):
+        (tmp_path / "restore").mkdir()
+        monkeypatch.chdir(tmp_path)
+        code, out, err = run(["-d", "./restore"], capsys)
+        assert code == 0 and "Found 0 images" in err

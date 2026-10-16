@@ -45,8 +45,8 @@ it unanswered keeps the default, which is how the tool currently works.
 
 ## Workflow
 
-7. **Restore and cleanup commands.** The quarantine has a manifest but no
-   `media-dedup restore` or `media-dedup empty-quarantine` command. Want those?
+7. **Cleanup command.** `media-dedup restore` exists now; there's still no
+   `media-dedup empty-quarantine`. Want one?
 
 8. **Multiple folders.** With `media-dedup A B`, removed files from both folders go to
    `A/.media-dedup-removed/`. Would you rather each folder get its own quarantine?

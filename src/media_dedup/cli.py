@@ -1,4 +1,9 @@
-"""Command line entry point: ``media-dedup [options] PATH...``."""
+"""Command line entry point: ``media-dedup [options] PATH...``, and
+``media-dedup restore [DIR]`` to undo it.
+
+``restore`` is recognised as the first argument rather than as an argparse
+subcommand, so a plain ``media-dedup PATH`` keeps working; a folder that is
+really named "restore" can still be scanned as ``./restore``."""
 
 from __future__ import annotations
 
@@ -11,7 +16,7 @@ from .fingerprint import fingerprint_all
 from .matching import DuplicateGroup, find_exact, find_similar
 from .media import MediaFile, scan
 from .prompt import QuitRequested, ask
-from .quarantine import Quarantine, default_directory
+from .quarantine import DEFAULT_DIRNAME, Quarantine, default_directory, find_manifest, restore
 from .report import debug_header, display_path, format_group, human_size
 
 
@@ -24,6 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
             "might be duplicates (different caption, watermark, crop...) are shown to "
             "you to decide."
         ),
+        epilog="To put removed files back, run: media-dedup restore [DIR]  (see media-dedup restore -h)",
     )
     parser.add_argument("paths", nargs="+", type=Path, metavar="PATH", help="folders (or files) to scan")
     parser.add_argument(
@@ -69,6 +75,35 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_restore_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="media-dedup restore",
+        description=(
+            "Move quarantined files back to where they were, using the quarantine's "
+            "manifest.jsonl. Files whose original path is taken again are left in "
+            "the quarantine, and nothing is ever overwritten."
+        ),
+    )
+    parser.add_argument(
+        "directory",
+        nargs="?",
+        type=Path,
+        default=Path("."),
+        metavar="DIR",
+        help="the quarantine folder, or the folder that was scanned (default: current folder)",
+    )
+    parser.add_argument(
+        "-o",
+        "--only",
+        action="append",
+        default=[],
+        metavar="PATTERN",
+        help="only restore files whose name or path matches this glob, e.g. 'cat*.jpg' (repeatable)",
+    )
+    parser.add_argument("-d", "--dry-run", action="store_true", help="show what would be restored, change nothing")
+    return parser
+
+
 def _stdin_is_interactive() -> bool:
     return sys.stdin.isatty()
 
@@ -88,6 +123,9 @@ def _plural(n: int, word: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["restore"]:
+        return restore_main(argv[1:])
     parser = build_parser()
     args = parser.parse_args(argv)
     for path in args.paths:
@@ -148,6 +186,39 @@ def _find_visual(
     return find_similar(fingerprinted)
 
 
+def restore_main(argv: list[str]) -> int:
+    """Returns 1 if any selected file couldn't be put back."""
+    parser = build_restore_parser()
+    args = parser.parse_args(argv)
+    manifest = find_manifest(args.directory)
+    if manifest is None:
+        parser.error(f"no quarantine manifest in {args.directory} or {args.directory / DEFAULT_DIRNAME}")
+    result = restore(manifest, args.only, dry_run=args.dry_run)
+    if not result.entries:
+        print("Nothing in the quarantine matches." if args.only else "The quarantine manifest is empty.")
+        return 0 if not args.only else 1
+
+    restored = result.with_status("restored")
+    verb = "Would restore" if args.dry_run else "Restored"
+    for e in restored:
+        print(f"{verb} {display_path(e.original)}")
+    for e in result.with_status("taken"):
+        _err(f"Skipped {display_path(e.quarantined)}: something is already at {display_path(e.original)}")
+    for e in result.with_status("missing"):
+        _err(f"Missing from the quarantine: {display_path(e.quarantined)} (was {display_path(e.original)})")
+    for e in result.with_status("failed"):
+        _err(f"Couldn't restore {display_path(e.original)}: {e.error}")
+    if result.unreadable_lines:
+        _err(f"Ignored {_plural(result.unreadable_lines, 'unreadable manifest line')}.")
+
+    left = len(result.entries) - len(restored)
+    print(
+        f"{'Dry run: would restore' if args.dry_run else 'Restored'} {_plural(len(restored), 'file')}"
+        + (f"; {left} couldn't be (see above)." if left else ".")
+    )
+    return 1 if left else 0
+
+
 def _dry_run(automatic: list[DuplicateGroup], uncertain: list[DuplicateGroup], debug: bool = False) -> int:
     for group in automatic:
         print(format_group(group, debug=debug) + "\n")
@@ -204,7 +275,7 @@ def _apply(
             f"Moved {_plural(len(quarantine.moved), 'file')} ({human_size(quarantine.bytes_moved)}) "
             f"to {display_path(quarantine.directory)}"
         )
-        print(f"Restore info: {display_path(quarantine.manifest)}")
+        print(f"To undo: media-dedup restore {display_path(quarantine.directory)}")
     else:
         print("Nothing was removed.")
     if undecided:

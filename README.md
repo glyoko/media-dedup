@@ -31,7 +31,21 @@ media-dedup ~/Pictures/memes             # then clean up
 "Removed" files are never deleted. They're moved into `.media-dedup-removed/` inside the
 (first) folder you scan, keeping their folder structure, and every move is logged to
 `.media-dedup-removed/manifest.jsonl` (original path, where it went, which file was kept).
-Delete that folder once you're happy, or move things back.
+Delete that folder once you're happy, or put things back with `media-dedup restore`:
+
+```sh
+media-dedup restore ~/Pictures/memes                 # put back everything that was removed
+media-dedup restore -d ~/Pictures/memes              # list what would be put back
+media-dedup restore -o 'cat*' -o 'old/*.mp4' ~/Pictures/memes   # only matching files
+```
+
+`DIR` is the folder you scanned or the quarantine folder itself (default: the current
+folder). Restored files are taken off the manifest, and the quarantine folder is removed
+once it's empty. A file is left in the quarantine, and reported, if something new already
+exists at its original path (nothing is ever overwritten) or if it was deleted from the
+quarantine. Restoring uses the absolute paths in the manifest, so it can't follow a folder
+that was moved or renamed since. To scan a folder that is literally named `restore`, write
+`./restore`.
 
 What happens to each kind of duplicate:
 

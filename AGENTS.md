@@ -12,6 +12,7 @@ uv run pytest                          # all tests + coverage report (~8 s)
 uv run pytest --no-cov -q tests/test_signature.py   # fast iteration
 uv run media-dedup --dry-run PATH      # run the tool
 uv run media-dedup -d -D PATH          # dry run + why each group formed
+uv run media-dedup restore [-d] PATH   # undo: move quarantined files back
 ```
 
 - The venv is pinned to **Python 3.13** (`.python-version`). The package supports 3.10+.
@@ -32,7 +33,8 @@ uv run media-dedup -d -D PATH          # dry run + why each group formed
 
 ## Architecture
 
-The pipeline in `cli.main`:
+`restore` is detected as the first argument in `cli.main` (not an argparse subcommand, so
+`media-dedup PATH` still works) and handled by `cli.restore_main`. The pipeline in `cli.main`:
 
 ```
 scan -> find_exact -> [unless --checksum-only: fingerprint_all -> find_similar]
@@ -48,7 +50,7 @@ scan -> find_exact -> [unless --checksum-only: fingerprint_all -> find_similar]
 | `signature.py` | `Signature` (pHash, dHash, 128px gray thumb, 16px colour thumb, dims, flat flag) and `compare() -> Match(level=NONE/POSSIBLE/CERTAIN)`. **All thresholds live here.** |
 | `matching.py` | `DuplicateGroup(kind=exact/similar/uncertain)`, candidate search, union-find clustering, and the anti-chaining rule. |
 | `quality.py` | `quality_key` / `rank`. |
-| `quarantine.py` | `Quarantine.move()` and the manifest. |
+| `quarantine.py` | `Quarantine.move()`, the manifest, and `restore()` (never overwrites; unrestored entries stay in the manifest). |
 | `prompt.py` | `ask()`, which raises `QuitRequested`. |
 | `report.py` | Output formatting. |
 

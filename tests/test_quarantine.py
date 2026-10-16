@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from media_dedup.quarantine import DEFAULT_DIRNAME, Quarantine, default_directory
+from media_dedup.quarantine import DEFAULT_DIRNAME, MANIFEST_NAME, Quarantine, default_directory, find_manifest, restore
 
 
 def write(path, data=b"data"):
@@ -52,3 +52,35 @@ def test_multiple_roots_share_their_common_parent(tmp_path, make_media):
     other = make_media(write(two / "a.jpg"), two, fingerprinted=False)
     q = Quarantine(tmp_path / "q", [one, two])
     assert q.move(other, kept, "exact") == tmp_path / "q" / "two" / "a.jpg"
+
+
+def test_same_path_quarantined_twice_restores_only_the_first(tmp_path, make_media):
+    """The same path quarantined in two runs: only one can go back."""
+    q = Quarantine(tmp_path / "q", [tmp_path])
+    kept = make_media(write(tmp_path / "keep.jpg"), fingerprinted=False)
+    q.move(make_media(write(tmp_path / "a.jpg", b"one"), fingerprinted=False), kept, "exact")
+    q.move(make_media(write(tmp_path / "a.jpg", b"two"), fingerprinted=False), kept, "exact")
+    result = restore(q.manifest)
+    assert [e.status for e in result.entries] == ["restored", "taken"]
+    assert (tmp_path / "a.jpg").read_bytes() == b"one"
+    assert (tmp_path / "q" / "a (1).jpg").exists()
+    assert len(q.manifest.read_text().splitlines()) == 1
+
+
+def test_restore_recreates_deleted_folders(tmp_path, make_media):
+    q = Quarantine(tmp_path / "q", [tmp_path])
+    kept = make_media(write(tmp_path / "keep.jpg"), fingerprinted=False)
+    q.move(make_media(write(tmp_path / "gone" / "deep" / "a.jpg"), fingerprinted=False), kept, "similar")
+    (tmp_path / "gone" / "deep").rmdir()
+    (tmp_path / "gone").rmdir()
+    assert [e.status for e in restore(q.manifest).entries] == ["restored"]
+    assert (tmp_path / "gone" / "deep" / "a.jpg").exists()
+    assert not (tmp_path / "q").exists()
+
+
+def test_find_manifest(tmp_path):
+    assert find_manifest(tmp_path) is None
+    m = write(tmp_path / DEFAULT_DIRNAME / MANIFEST_NAME)
+    assert find_manifest(tmp_path) == m
+    assert find_manifest(tmp_path / DEFAULT_DIRNAME) == m
+    assert find_manifest(m) == m
