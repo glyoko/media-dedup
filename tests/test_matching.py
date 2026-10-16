@@ -4,13 +4,13 @@ import dataclasses
 import shutil
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageEnhance
 
 from media_dedup import matching
 from media_dedup.matching import compare_files, find_exact, find_similar
 from media_dedup.media import MediaFile
 from media_dedup.signature import Match, MatchLevel, signature_from_array
-from media_factory import caption, load, recompress, write_video
+from media_factory import caption, load, recompress, watermark, write_video
 
 
 def by_name(group):
@@ -104,6 +104,22 @@ class TestFindSimilar:
         assert by_name(groups["similar"]) == ["a", "b"]
         assert by_name(groups["uncertain"]) == ["a", "c"]
 
+    def test_possible_chains_do_not_merge_unrelated_files(self, monkeypatch, tmp_path):
+        """A~B~C~D~E as POSSIBLE links only: every group member must itself
+        match its group's keeper, so the chain splits into pairs."""
+        files = [_fake(tmp_path, name, 500 - i) for i, name in enumerate("abcde")]
+        linked = {frozenset(p) for p in zip(files, files[1:])}
+        monkeypatch.setattr(
+            matching,
+            "compare_files",
+            lambda x, y: Match(MatchLevel.POSSIBLE if frozenset({x, y}) in linked else MatchLevel.NONE, 10),
+        )
+        groups = find_similar(files)
+        assert all(g.kind == "uncertain" for g in groups)
+        assert sorted(by_name(g) for g in groups) == [["a", "b"], ["c", "d"]]
+        for g in groups:
+            assert all(m.level >= MatchLevel.POSSIBLE for m in g.matches.values())
+
 
 def _fake(tmp_path, name: str, pixels: int) -> MediaFile:
     sig = signature_from_array(np.random.default_rng(0).integers(0, 255, (32, 32, 3), dtype=np.uint8))
@@ -131,6 +147,13 @@ class TestVideos:
         a = make_media(write_video(tmp_path / "a.mp4", load(0)))
         b = make_media(write_video(tmp_path / "b.mp4", caption(load(0))))
         assert compare_files(a, b).level is MatchLevel.POSSIBLE
+
+    def test_darkened_watermarked_video_is_never_certain(self, tmp_path, make_media):
+        darken = lambda img: ImageEnhance.Brightness(img).enhance(0.06)
+        for i in range(4):
+            a = make_media(write_video(tmp_path / f"{i}a.mp4", darken(load(i)), size=(640, 480)))
+            b = make_media(write_video(tmp_path / f"{i}b.mp4", darken(watermark(load(i)))))
+            assert compare_files(a, b).level is MatchLevel.POSSIBLE, i
 
     def test_different_duration_never_matches(self, tmp_path, make_media):
         a = make_media(write_video(tmp_path / "a.mp4", load(0), frames=48))

@@ -66,7 +66,11 @@ Notes on the data model:
 - **The local-diff check is what stops memes with different captions from being
   auto-removed. Don't weaken it.** Hash distance alone puts them in the same range as a
   resized copy.
-- **Solid-colour ("flat") images and frames are never CERTAIN.**
+- **POSSIBLE needs both hashes close** (`PHASH_POSSIBLE` and `DHASH_POSSIBLE`). pHash
+  alone collides for unrelated photos with a similar layout.
+- **Solid-colour ("flat") images and frames are never CERTAIN.** Nor are low-contrast
+  ones (`LOW_CONTRAST_STDDEV`, e.g. very dark photos): the absolute local-diff limit can't
+  see a caption that was darkened along with them.
 - **Videos use a stronger blur** (`VIDEO_MIN_BLUR`), because two encodes' sampled frames
   are slightly misaligned in time.
 - **Videos must have similar durations** to be compared at all.

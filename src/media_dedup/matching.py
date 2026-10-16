@@ -224,15 +224,29 @@ def find_similar(files: Iterable[MediaFile]) -> list[DuplicateGroup]:
     def rep(mf: MediaFile) -> MediaFile:
         return representative.get(mf, mf)
 
+    #    The same anti-chaining rule applies: union-find over POSSIBLE links
+    #    would otherwise chain hundreds of unrelated files that merely share a
+    #    layout (e.g. screenshots) into one group, so each group holds only
+    #    files that themselves match its keeper.
     possible_uf = _UnionFind()
+    neighbours: dict[MediaFile, set[MediaFile]] = defaultdict(set)
     for a, b in edges:
         ra, rb = rep(a), rep(b)
         if ra is not rb:
             possible_uf.union(ra, rb)
+            neighbours[ra].add(rb)
+            neighbours[rb].add(ra)
     for cluster in possible_uf.groups():
-        ranked = rank(cluster)
-        keeper = ranked[0]
-        groups.append(
-            DuplicateGroup("uncertain", ranked, {o: match_between(keeper, o) for o in ranked[1:]})
-        )
+        remaining = rank(cluster)
+        while len(remaining) > 1:
+            keeper = remaining.pop(0)
+            matches = {
+                o: m
+                for o in remaining
+                if o in neighbours[keeper] and (m := match_between(keeper, o)).level > MatchLevel.NONE
+            }
+            if matches:
+                members = [keeper] + list(matches)
+                groups.append(DuplicateGroup("uncertain", members, matches))
+                remaining = [o for o in remaining if o not in matches]
     return groups

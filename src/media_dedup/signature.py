@@ -40,6 +40,11 @@ PHASH_CERTAIN = 6
 DHASH_CERTAIN = 10
 #: Max phash Hamming distance for a POSSIBLE match (user gets asked).
 PHASH_POSSIBLE = 14
+#: Max dhash Hamming distance for a POSSIBLE match. pHash alone only sees the
+#: coarse layout, so unrelated photos with a similar composition can land
+#: within PHASH_POSSIBLE; their dhash distance stays near random (~32).
+#: Captions, watermarks and brightness changes measured <= 6, and 5% crops <= 21.
+DHASH_POSSIBLE = 26
 #: Max mean difference (0-255) of any 4x4 block of the 128x128 grayscale
 #: thumbnails for a CERTAIN match. Benign degradations (even JPEG quality 8
 #: or several rounds of resize + re-compress) stay below ~7; captions and
@@ -49,8 +54,16 @@ LOCAL_DIFF_CERTAIN = 12.0
 COLOR_DIFF_CERTAIN = 10.0
 #: Aspect ratios within this factor of each other are considered equal.
 ASPECT_TOLERANCE = 1.03
-#: Grayscale std-dev below which an image is "flat" (hashes are meaningless).
-FLAT_STDDEV = 4.0
+#: Std-dev of the 128px grayscale thumbnail below which an image is "flat"
+#: (hashes are meaningless). Solid colours measure 0, and noisy black video
+#: frames about 0.3. Sparse screenshots (about 3.8) and very dark photos
+#: (about 2.5) have real content and must stay above this value.
+FLAT_STDDEV = 1.0
+#: Std-dev of the 32px grayscale thumbnail below which an image is "low
+#: contrast": hashed as usual, but never a CERTAIN match. LOCAL_DIFF_CERTAIN is
+#: absolute, so in a very dark image a caption or watermark that's darkened
+#: with it is only ~15 levels brighter and slips under the limit.
+LOW_CONTRAST_STDDEV = 4.0
 #: Max mean colour difference for two flat images to be a POSSIBLE match.
 FLAT_COLOR_DIFF = 6.0
 
@@ -84,6 +97,7 @@ class Signature:
     width: int
     height: int
     flat: bool
+    low_contrast: bool = False
 
     @property
     def aspect(self) -> float:
@@ -101,11 +115,28 @@ def to_rgb_array(img: Image.Image) -> np.ndarray:
     PNG with alpha and its flattened JPEG twin produce the same signature.
     """
     img = ImageOps.exif_transpose(img)
+    if img.mode in ("I", "F") or img.mode.startswith("I;16"):
+        img = Image.fromarray(_high_depth_to_uint8(np.asarray(img)), "L")
     if img.mode in ("RGBA", "LA", "PA") or (img.mode == "P" and "transparency" in img.info):
         img = img.convert("RGBA")
         background = Image.new("RGBA", img.size, (255, 255, 255, 255))
         img = Image.alpha_composite(background, img)
     return np.asarray(img.convert("RGB"))
+
+
+def _high_depth_to_uint8(arr: np.ndarray) -> np.ndarray:
+    """Scale 16-bit or float grayscale to 0-255.
+
+    PIL's ``convert("RGB")`` clips these modes instead of scaling them, which
+    turns every 16-bit scan or float TIFF into a solid white or black image.
+    """
+    is_float = arr.dtype.kind == "f"
+    arr = arr.astype(np.float64)
+    if is_float and arr.max(initial=0.0) <= 1.0:
+        arr = arr * 255.0
+    elif arr.max(initial=0.0) > 255:
+        arr = arr / 257.0
+    return np.clip(np.rint(arr), 0, 255).astype(np.uint8)
 
 
 def signature_from_array(rgb: np.ndarray, size: tuple[int, int] | None = None) -> Signature:
@@ -128,14 +159,16 @@ def signature_from_array(rgb: np.ndarray, size: tuple[int, int] | None = None) -
     tiny = cv2.resize(gray, (9, 8), interpolation=cv2.INTER_AREA).astype(np.int16)
     dhash = _bits_to_int(tiny[:, 1:] > tiny[:, :-1])
 
+    thumb = cv2.resize(gray, (GRAY_SIZE, GRAY_SIZE), interpolation=cv2.INTER_AREA)
     return Signature(
         phash=phash,
         dhash=dhash,
-        gray=cv2.resize(gray, (GRAY_SIZE, GRAY_SIZE), interpolation=cv2.INTER_AREA),
+        gray=thumb,
         color=cv2.resize(rgb, (COLOR_SIZE, COLOR_SIZE), interpolation=cv2.INTER_AREA),
         width=width,
         height=height,
-        flat=float(small.std()) < FLAT_STDDEV,
+        flat=float(thumb.std()) < FLAT_STDDEV,
+        low_contrast=float(small.std()) < LOW_CONTRAST_STDDEV,
     )
 
 
@@ -193,6 +226,8 @@ def compare(a: Signature, b: Signature, min_blur: float = 0.8) -> Match:
     if pd > PHASH_POSSIBLE:
         return Match(MatchLevel.NONE, pd)
     dd = hamming(a.dhash, b.dhash)
+    if dd > DHASH_POSSIBLE:
+        return Match(MatchLevel.NONE, pd, dd)
     local, color = local_diff(a, b, min_blur), color_diff(a, b)
     certain = (
         pd <= PHASH_CERTAIN
@@ -200,6 +235,7 @@ def compare(a: Signature, b: Signature, min_blur: float = 0.8) -> Match:
         and local <= LOCAL_DIFF_CERTAIN
         and color <= COLOR_DIFF_CERTAIN
         and aspects_match(a.aspect, b.aspect)
+        and not (a.low_contrast or b.low_contrast)
     )
     level = MatchLevel.CERTAIN if certain else MatchLevel.POSSIBLE
     return Match(level, pd, dd, local, color)
