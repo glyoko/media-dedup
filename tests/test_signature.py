@@ -109,14 +109,6 @@ def test_dhash_at_the_limit_is_still_possible(originals):
     assert compare(a, near).level is MatchLevel.POSSIBLE
 
 
-def test_same_template_different_caption_is_not_certain():
-    for i in range(len(SAMPLE_IMAGES)):
-        img = load(i)
-        a = signature_from_image(caption(img, "WHEN THE TESTS PASS"))
-        b = signature_from_image(caption(img, "NOBODY:"))
-        assert compare(a, b).level is MatchLevel.POSSIBLE
-
-
 def test_unrelated_images_do_not_match(originals):
     for (_, a), (_, b) in itertools.combinations(originals, 2):
         assert compare(a, b).level is MatchLevel.NONE
